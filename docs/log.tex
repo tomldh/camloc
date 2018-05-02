@@ -1,0 +1,258 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{geometry}
+\geometry{margin=1.2in}
+\usepackage{amsmath}
+\usepackage{cool}
+
+\makeatletter
+\renewcommand*\env@matrix[1][\arraystretch]{%
+  \edef\arraystretch{#1}%
+  \hskip -\arraycolsep
+  \let\@ifnextchar\new@ifnextchar
+  \array{*\c@MaxMatrixCols c}}
+\makeatother
+
+\begin{document}
+
+\section{Calculation of Analytical Gradient in Kabsch Algorithm}
+
+$X$ is a $N \times 3$ matrix representing a set of $N$ scene points in 3D space. The $N\times3$ matrix $P$ is the corresponding measurements of the $N$ scene points. $x_{ij}$ and $p_{ij}$ represent the $(i,j)$ element of the matrix $X$ and $P$ respectively. \par
+
+Let $\textbf{t} \in \mathbb{R}^3$ represent the translation of the scene points in $X$ so that its centroid coincides with the origin of the coordinate system. The centroid of the dataset is defined as the average position of all the points, therefore, each component $t_k$, $k\in[1,3]$ of the translation vector is computed as follows:
+
+\[t_k = -\frac{1}{N}\sum_{i=1}^{N}x_{ij}, \quad \forall j=k\]
+
+
+The partial derivatives of $\textbf{t}$ w.r.t the coordinates of the scene points are defined as follows:  
+
+\[ \pderiv[1]{t_k}{x_{ij}} =  
+\begin{cases} 
+      -\frac{1}{N} & ,if \quad k = j \\
+      0 & ,if \quad k \neq j 
+\end{cases}
+\]
+
+Let $\tilde{X} = X + \textbf{t}$, and now the centroid of $\tilde{X}$ coincides with the origin. Assuming the centroid of $P$ has been overlapped with the origin, there exists a $3\times3$ rotation matrix $R$ such that $P = R\tilde{X}$. To find out the optimal rotation matrix $R$, perform the following Kabsch algorithm: \par
+\begin{enumerate}
+\item Compute the $3\times3$ covariance matrix $A = P^T\tilde{X}$.
+\item Perform SVD of the matrix $A = USV^T$.
+\item $d = det (UV^T)$.
+\item $R = U
+\begin{pmatrix}
+1 & 0 & 0 \\
+0 & 1 & 0 \\
+0 & 0 & d 
+\end{pmatrix}
+V^T $, where $d=\pm1$.
+\end{enumerate}
+
+How to calcuate $\pderiv[1]{R}{x_{ij}}$ ? \par
+
+\begin{enumerate}
+\item Compute $\pderiv[1]{A}{x_{ij}}$.
+\item Compute $\pderiv[1]{U}{a_{kl}}$, $\pderiv[1]{D}{a_{kl}}$ and $\pderiv[1]{V^T}{a_{kl}}$ for each element $a_{kl}$ of matrix $A$, according to method proposed by Papadopoulo \emph{et al.}
+\item $R = U
+\begin{pmatrix}
+1 & 0 & 0 \\
+0 & 1 & 0 \\
+0 & 0 & d
+\end{pmatrix}
+V^T$ and $\pderiv[1]{R}{a_{kl}} = \pderiv[1]{U}{a_{kl}}
+\begin{pmatrix}
+1 & 0 & 0 \\
+0 & 1 & 0 \\
+0 & 0 & d
+\end{pmatrix}
+V^T + U
+\begin{pmatrix}
+1 & 0 & 0 \\
+0 & 1 & 0 \\
+0 & 0 & d
+\end{pmatrix}
+\pderiv[1]{V^T}{a_{kl}}$, where $d=\pm1$.
+\item $\pderiv[1]{R}{x_{ij}} = \pderiv[1]{R}{a_{kl}} \times \pderiv[1]{a_{kl}}{x_{ij}}$
+\end{enumerate}
+Remarks:
+\begin{enumerate}
+\item $x_{ij}$ and $p_{ij}$ should be correspondence.
+\item  $\pderiv[1]{A}{x_{ij}}$ will have its element $\pderiv[1]{a_{kl}}{x_{ij}}=0$ if $l \neq j$ (See example below). Therefore, $\pderiv[1]{a_{kl}}{x_{ij}}$ needs to be chosen carefully for use in calculating $\pderiv[1]{R}{x_{ij}}$, i.e. with $l=j$.
+\end{enumerate}
+\bigskip
+Example. \par
+For $N=4$, 
+\[
+X =
+\begin{pmatrix}
+
+x_{11} & x_{12} & x_{13} \\
+x_{21} & x_{22} & x_{23} \\
+x_{31} & x_{32} & x_{33} \\
+x_{41} & x_{42} & x_{43}
+
+\end{pmatrix}
+\quad
+P = 
+\begin{pmatrix}
+
+p_{11} & p_{12} & p_{13} \\
+p_{21} & p_{22} & p_{23} \\
+p_{31} & p_{32} & p_{33} \\
+p_{41} & p_{42} & p_{43}
+\end{pmatrix}
+\]
+
+The translation vector,
+\[
+\textbf{t} = 
+\begin{pmatrix}
+t_1 \\
+t_2 \\
+t_3 
+\end{pmatrix}
+=
+\begin{pmatrix}[1.5]
+
+-\frac{1}{4}(x_{11}+x_{21}+x_{31}+x_{41}) \\
+-\frac{1}{4}(x_{12}+x_{22}+x_{32}+x_{42}) \\
+-\frac{1}{4}(x_{13}+x_{23}+x_{33}+x_{43})
+
+\end{pmatrix}
+\]
+
+e.g. the partial derivatives of $\textbf{t}$ w.r.t to $x_{43}$ is
+\[
+\pderiv[1]{\textbf{t}}{x_{43}} = 
+\begin{pmatrix}[1.5]
+
+\pderiv[1]{t_1}{x_{43}} \\
+\pderiv[1]{t_2}{x_{43}} \\
+\pderiv[1]{t_3}{x_{43}}
+
+\end{pmatrix}
+=
+\begin{pmatrix}[1.5]
+0 \\
+0 \\
+-\frac{1}{4}
+
+\end{pmatrix}
+\]
+
+Apply the translation to $X$,
+
+\[
+\tilde{X} = X + \textbf{t}^T =
+\begin{pmatrix}
+
+x_{11}+t_1 & x_{12}+t_2 & x_{13}+t_3 \\
+x_{21}+t_1 & x_{22}+t_2 & x_{23}+t_3 \\
+x_{31}+t_1 & x_{32}+t_2 & x_{33}+t_3 \\
+x_{41}+t_1 & x_{42}+t_2 & x_{43}+t_3
+
+\end{pmatrix}
+\]
+
+\[
+\pderiv[1]{\tilde{X}}{x_{43}} = \pderiv[1]{X}{x_{43}} + \pderiv[1]{\textbf{t}^T}{x_{43}} = 
+\begin{pmatrix}
+0 & 0 & 0 \\
+0 & 0 & 0 \\
+0 & 0 & 0 \\
+0 & 0 & 1 
+\end{pmatrix}
++
+\begin{pmatrix}
+0 & 0 & -\frac{1}{4} \\
+0 & 0 & -\frac{1}{4} \\
+0 & 0 & -\frac{1}{4} \\
+0 & 0 & -\frac{1}{4}
+\end{pmatrix}
+=
+\begin{pmatrix}
+0 & 0 & -\frac{1}{4} \\
+0 & 0 & -\frac{1}{4} \\
+0 & 0 & -\frac{1}{4} \\
+0 & 0 & \frac{1}{4}
+\end{pmatrix}
+\]
+
+The covariance matrix $A=P^T\tilde{X}$, and its partial derivative w.r.t to $x_{43}$:
+
+\[
+\pderiv[1]{A}{x_{43}}
+=
+\begin{pmatrix}
+
+\pderiv[1]{a_{11}}{x_{43}} & \pderiv[1]{a_{12}}{x_{43}} & \pderiv[1]{a_{13}}{x_{43}} \\\\
+\pderiv[1]{a_{21}}{x_{43}} & \pderiv[1]{a_{22}}{x_{43}} & \pderiv[1]{a_{23}}{x_{43}} \\\\
+\pderiv[1]{a_{31}}{x_{43}} & \pderiv[1]{a_{32}}{x_{43}} & \pderiv[1]{a_{33}}{x_{43}}
+
+\end{pmatrix}
+\]
+
+\[
+\pderiv[1]{A}{x_{43}}
+= P^T\pderiv[1]{\tilde{X}}{x_{43}} =
+\begin{pmatrix}
+
+p_{11} & p_{21} & p_{31} & p_{41} \\
+p_{12} & p_{22} & p_{32} & p_{42} \\
+p_{13} & p_{23} & p_{33} & p_{43}
+
+\end{pmatrix}
+\begin{pmatrix}
+0 & 0 & -\frac{1}{4} \\
+0 & 0 & -\frac{1}{4} \\
+0 & 0 & -\frac{1}{4} \\
+0 & 0 & \frac{1}{4}
+\end{pmatrix}
+=
+\begin{pmatrix}
+
+0 & 0 & -\frac{1}{4}p_{11}-\frac{1}{4}p_{21}-\frac{1}{4}p_{31}+\frac{1}{4}p_{41} \\\\
+0 & 0 & -\frac{1}{4}p_{12}-\frac{1}{4}p_{22}-\frac{1}{4}p_{32}+\frac{1}{4}p_{42} \\\\
+0 & 0 & -\frac{1}{4}p_{13}-\frac{1}{4}p_{23}-\frac{1}{4}p_{33}+\frac{1}{4}p_{43} 
+
+\end{pmatrix}
+\]
+
+Performing SVD on $A$, we have $A=USV^T$. Taking the partial derivatives of $A$ w.r.t the element, e.g. $a_{23}$, we have $\pderiv[1]{U}{a_{23}}$ and $\pderiv[1]{V^T}{a_{23}}$. Assuming $d=1$, we can compute $\pderiv[1]{R}{a_{23}}$ as follows: 
+
+\[
+\pderiv[1]{R}{a_{23}} = \pderiv[1]{U}{a_{23}}V^T + U\pderiv[1]{V^T}{a_{23}} =
+\begin{pmatrix}
+
+\pderiv[1]{r_{11}}{a_{23}} & \pderiv[1]{r_{12}}{a_{23}} & \pderiv[1]{r_{13}}{a_{23}} \\\\
+\pderiv[1]{r_{21}}{a_{23}} & \pderiv[1]{r_{22}}{a_{23}} & \pderiv[1]{r_{23}}{a_{23}} \\\\
+\pderiv[1]{r_{31}}{a_{23}} & \pderiv[1]{r_{32}}{a_{23}} & \pderiv[1]{r_{33}}{a_{23}}
+
+\end{pmatrix}
+\]
+
+Given $\pderiv[1]{a_{23}}{x_{43}} = -\frac{1}{4}p_{12}-\frac{1}{4}p_{22}-\frac{1}{4}p_{32}+\frac{1}{4}p_{42}$ from the above calculation,
+
+\[
+\pderiv[1]{R}{x_{43}}
+= \pderiv[1]{a_{23}}{x_{43}} \times
+\begin{pmatrix}
+
+\pderiv[1]{r_{11}}{a_{23}} & \pderiv[1]{r_{12}}{a_{23}} & \pderiv[1]{r_{13}}{a_{23}} \\\\
+\pderiv[1]{r_{21}}{a_{23}} & \pderiv[1]{r_{22}}{a_{23}} & \pderiv[1]{r_{23}}{a_{23}} \\\\
+\pderiv[1]{r_{31}}{a_{23}} & \pderiv[1]{r_{32}}{a_{23}} & \pderiv[1]{r_{33}}{a_{23}}
+
+\end{pmatrix}
+=
+\begin{pmatrix}
+
+\pderiv[1]{r_{11}}{x_{43}} & \pderiv[1]{r_{12}}{x_{43}} & \pderiv[1]{r_{13}}{x_{43}} \\\\
+\pderiv[1]{r_{21}}{x_{43}} & \pderiv[1]{r_{22}}{x_{43}} & \pderiv[1]{r_{23}}{x_{43}} \\\\
+\pderiv[1]{r_{31}}{x_{43}} & \pderiv[1]{r_{32}}{x_{43}} & \pderiv[1]{r_{33}}{x_{43}}
+
+\end{pmatrix}
+\]
+ 
+
+\end{document}
