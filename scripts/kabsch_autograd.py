@@ -41,8 +41,9 @@ def runKabsch(P, X):
     # 2. calculate covariance matrix
 
     A = torch.mm(torch.t(P), X)
-    U, S, Vt = torch.svd(A)
+    U, S, V = torch.svd(A)
     print(S)
+    Vt = torch.t(V)
     R = torch.mm(U, Vt)
 
     if torch.det(R) < 0:
@@ -63,7 +64,7 @@ def errRMS(A, B):
     '''
     #assert A.shape == B.shape
 
-    return torch.sum(torch.sqrt(torch.sum(torch.pow((A-B), 2), axis=1)), axis=0) / A.shape[0]
+    return torch.sum(torch.sqrt(torch.sum(torch.pow((A-B), 2), 1)), 0) / A.shape[0]
 
 
 if __name__ == '__main__':
@@ -92,7 +93,7 @@ if __name__ == '__main__':
     estRotMatInv = torch.inverse(estRotMat)
 
     # apply inverse rotation to known data points
-    samples_est = np.t(torch.mm(estRotMatInv, np.t(samples_rot)))
+    samples_est = torch.t(torch.mm(estRotMatInv, torch.t(samples_rot)))
     print('estimated samples: ')
     print(samples_est)
 
