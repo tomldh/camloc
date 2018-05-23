@@ -198,37 +198,16 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
         return R
 
     print("\tComputing jacobian...")
-    # X.requires_grad = True
+    X.requires_grad = True
 
-    # tx = torch.mean(X, 0)
-    # tp = torch.mean(P, 0)
-    # Xc = X.sub(tx)
-    # Pc = P.sub(tp)
+    tx = torch.mean(X, 0)
+    tp = torch.mean(P, 0)
+    Xc = X.sub(tx+0.1)
+    Pc = P.sub(tp+0.1)
 
-    #########Debug code
-    Xc = X.sub(0.5)
-    Pc = P.sub(0.5)
-
-    # print(tx.requires_grad)
     A = torch.mm(torch.t(Pc), Xc)
 
-    print("A {}".format(A))
-
-    A.requires_grad = True
-    At = A + 1e-3   # debug, by adjusting the epsilon, nan grad will be removed
-
-    U, S, V = torch.svd(At)
-
-    print("U {}".format(U))
-    onehot = torch.zeros(9, dtype=torch.float32)
-    onehot[0] = 1
-    if use_cuda:
-        U.backward(onehot.view(U.size()).cuda(), retain_graph=True)
-    else:
-        U.backward(onehot.view(U.size()), retain_graph=True)
-    print(A.grad.data)
-
-    #################end of debug code
+    U, S, V = torch.svd(A)
 
     Vt = torch.t(V)
 
@@ -251,23 +230,23 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
         onehot = torch.zeros(numelR, dtype=torch.float32)
         onehot[i] = 1
 
-        # if use_cuda:
-        #     r.backward(onehot.view(r.size()).cuda(), retain_graph=True)
-        # else:
-        #     r.backward(onehot.view(r.size()), retain_graph=True)
-        # jacobian[i, :] = X.grad.data.view(-1)
+        if use_cuda:
+            r.backward(onehot.view(r.size()).cuda(), retain_graph=True)
+        else:
+            r.backward(onehot.view(r.size()), retain_graph=True)
+        jacobian[i, :] = X.grad.data.view(-1)
 
-        # print(U.grad.data)
-        # X.grad.data.zero_()
+        X.grad.data.zero_()
 
-        # if use_cuda:
-        #     t.backward(onehot.view(t.size()).cuda(), retain_graph=True)
-        # else:
-        #     t.backward(onehot.view(t.size()), retain_graph=True)
-        # jacobian[i+3, :] = X.grad.data.view(-1)
-        #
-        # X.grad.data.zero_()
-    return r, r
+        if use_cuda:
+            tx.backward(onehot.view(tx.size()).cuda(), retain_graph=True)
+        else:
+            tx.backward(onehot.view(tx.size()), retain_graph=True)
+        jacobian[i+3, :] = X.grad.data.view(-1)
+
+        X.grad.data.zero_()
+
+    return r, tx
 
 
 ########################################################
@@ -328,7 +307,7 @@ def kabsch_fd(P, X, eps=0.1, jacobian=None):
 
             # place derivatives to column (w.r.t X[i, j]) in jacobian matrix
             jacobian[:3, i*3+j] = diffR.view(-1)
-            # jacobian[3:, i*3+j] = diffT.view(-1)
+            jacobian[3:, i*3+j] = diffT.view(-1)
 
     return R, t
 
@@ -341,8 +320,8 @@ def kabsch(P, X):
     tx = torch.mean(X, 0)
     tp = torch.mean(P, 0)
 
-    Xc = X.sub(0.25)
-    Pc = P.sub(0.25)
+    Xc = X.sub(tx+0.1)
+    Pc = P.sub(tp+0.1)
 
     A = torch.mm(torch.t(Pc), Xc)
 
@@ -418,7 +397,7 @@ if __name__ == '__main__':
         use_cuda = True
 
     # create known a rotation and translation
-    tf = Transformation(rots=torch.FloatTensor([0., pi/2, 0.]), trans=torch.FloatTensor([0., 0., 0.]))
+    tf = Transformation(trans=torch.FloatTensor([10., 2., 0.]))
     tf.setRotation(tf.getRotation(rep=1))
     tf.setRep(1)
     print("Rotation matrix:\n{}".format(tf.getRotation(rep=0)))
@@ -428,8 +407,8 @@ if __name__ == '__main__':
     for k, p in enumerate(powers):
         N.append(int(pow(2, p)))
         # create sample scene point and correspondences
-        scenePts, measurePts = createData(4, transform=tf)
-        # scenePts, measurePts = createData(N[k], seed=10, transform=tf)
+        # scenePts, measurePts = createData(4, transform=tf)
+        scenePts, measurePts = createData(N[k], seed=10, transform=tf)
         # print("Samples:\n{}".format(scenePts))
         # print("Measurements:\n{}".format(measurePts))
 
