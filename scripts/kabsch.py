@@ -12,6 +12,7 @@ from math import cos, sin, pow, pi
 
 import time
 import matplotlib.pyplot as plt
+import utility as utl
 
 ########################################
 # Data class
@@ -162,12 +163,13 @@ class Rodrigues(torch.autograd.Function):
         ctx.save_for_backward(input, jac)
         return r
 
+    @staticmethod
     def backward(ctx, grad_output):
         # print("grad_output size: {}".format(grad_output.size()))
         input, jac = ctx.saved_tensors
         # print("input size: {}".format(input.size()))
         # print(input)
-        # print("jac size: {}".format(jac.size()))
+        print("jac size: {}".format(jac.size()))
         # print(jac)
         # FIXME: determine grad_input size dynamically
         grad_input = torch.mm(jac, grad_output).view(3, 3)
@@ -199,27 +201,59 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
 
     print("\tComputing jacobian...")
     X.requires_grad = True
+    X.register_hook(utl.Hook_X)
 
     tx = torch.mean(X, 0)
     tp = torch.mean(P, 0)
-    Xc = X.sub(tx+0.1)
-    Pc = P.sub(tp+0.1)
+    Xc = X.sub(0)
+    Pc = P.sub(0)
+
+    print("Xc")
+    print(Xc)
+
+    Xc.register_hook(utl.Hook_Xc)
 
     A = torch.mm(torch.t(Pc), Xc)
-
+    print("A:")
+    print(A)
+    A.register_hook(utl.Hook_A)
     U, S, V = torch.svd(A)
+    # S.register_hook(utl.Hook_S)
+    U.register_hook(utl.Hook_U)
+    V.register_hook(utl.Hook_V)
+    print("U:")
+    print(U)
+    print("S:")
+    print(S)
+    print("V")
+    print(V)
+    # numelU = torch.numel(A)
+    # jacU = torch.zeros([9,12], dtype=torch.float)
+    # for i in range(numelU):
+    #     print("Gradient w.r.t. U element {}".format(i))
+    #     onehot = torch.zeros(numelU, dtype=torch.float32)
+    #     onehot[i] = 1
+    #
+    #     if use_cuda:
+    #         U.backward(onehot.view(U.size()).cuda(), retain_graph=True)
+    #     else:
+    #         U.backward(onehot.view(U.size()), retain_graph=True)
+    #     jacU[i, :] = X.grad.data.view(-1)
+    #     X.grad.data.zero_()
+    # print("Autograd Jacobian U:")
+    # print(jacU)
 
     Vt = torch.t(V)
-
+    # Vt.register_hook(utl.Hook_Vt)
     d = torch.det(torch.mm(U, Vt))
-
+    # d.register_hook(utl.Hook_d)
     D = torch.FloatTensor([[1, 0, 0], [0, 1, 0], [0, 0, d]])
-
+    # D.register_hook(utl.Hook_D)
     if use_cuda:
         D = D.cuda()
 
     R = torch.mm(U, torch.mm(D, Vt))
-
+    # R.register_hook(utl.Hook_R)
     rod = Rodrigues.apply
 
     r = rod(R, use_cuda)
@@ -227,6 +261,7 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
     numelR = torch.numel(r)
 
     for i in range(numelR):
+        print("Gradient w.r.t. element {}".format(i))
         onehot = torch.zeros(numelR, dtype=torch.float32)
         onehot[i] = 1
 
@@ -238,13 +273,13 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
 
         X.grad.data.zero_()
 
-        if use_cuda:
-            tx.backward(onehot.view(tx.size()).cuda(), retain_graph=True)
-        else:
-            tx.backward(onehot.view(tx.size()), retain_graph=True)
-        jacobian[i+3, :] = X.grad.data.view(-1)
-
-        X.grad.data.zero_()
+        # if use_cuda:
+        #     tx.backward(onehot.view(tx.size()).cuda(), retain_graph=True)
+        # else:
+        #     tx.backward(onehot.view(tx.size()), retain_graph=True)
+        # jacobian[i+3, :] = X.grad.data.view(-1)
+        #
+        # X.grad.data.zero_()
 
     return r, tx
 
@@ -279,7 +314,7 @@ def kabsch_fd(P, X, eps=0.1, jacobian=None):
         print("\tError: Expected 3D coordinates, but got {}.".format(
             X.size()[0]))
 
-    R, t = kabsch(P, X)
+    R, t, U, A = kabsch(P, X)
 
     # Return rotation matrix only if no gradient is required
     if jacobian is None:
@@ -290,14 +325,17 @@ def kabsch_fd(P, X, eps=0.1, jacobian=None):
     # create data containers
     # FIXME: use axis-angle
 
+    jacU = torch.zeros([9, 12], dtype=torch.float32)
+    jacA = torch.zeros([9, 12], dtype=torch.float32)
+
     for i in range(X.size()[0]):
         for j in range(3):
 
             X[i, j] += eps
-            fwdR, fwdT = kabsch(P, X)
+            fwdR, fwdT, fwdU, fwdA = kabsch(P, X)
 
             X[i, j] -= 2*eps
-            bwdR, bwdT = kabsch(P, X)
+            bwdR, bwdT, bwdU, bwdA = kabsch(P, X)
 
             X[i, j] += eps
 
@@ -305,9 +343,19 @@ def kabsch_fd(P, X, eps=0.1, jacobian=None):
 
             diffT = (fwdT-bwdT)/(2*eps)
 
+            diffU = (fwdU-bwdU) / (2*eps)
+            diffA = (fwdA-bwdA) / (2*eps)
+
+            jacU[:, i*3+j] = diffU.view(-1)
+            jacA[:, i*3+j] = diffA.view(-1)
             # place derivatives to column (w.r.t X[i, j]) in jacobian matrix
             jacobian[:3, i*3+j] = diffR.view(-1)
-            jacobian[3:, i*3+j] = diffT.view(-1)
+            # jacobian[3:, i*3+j] = diffT.view(-1)
+
+    # print("Jacobian U:")
+    # print(jacU)
+    print("Jacobian A:")
+    print(jacA)
 
     return R, t
 
@@ -320,8 +368,8 @@ def kabsch(P, X):
     tx = torch.mean(X, 0)
     tp = torch.mean(P, 0)
 
-    Xc = X.sub(tx+0.1)
-    Pc = P.sub(tp+0.1)
+    Xc = X.sub(0)
+    Pc = P.sub(0)
 
     A = torch.mm(torch.t(Pc), Xc)
 
@@ -335,7 +383,7 @@ def kabsch(P, X):
 
     R = torch.mm(U, torch.mm(D, Vt))
 
-    return torch.from_numpy(cv2.Rodrigues(R.numpy())[0]), tx
+    return torch.from_numpy(cv2.Rodrigues(R.numpy())[0]), tx, U, A
 
 
 def createData(N, seed=-1, transform=None):
@@ -359,6 +407,12 @@ def createData(N, seed=-1, transform=None):
              [0., 1., 0.],
              [1., 1., 0.]
              ])
+        # data = torch.FloatTensor(
+        #     [[0.5, -0.5, 0.],
+        #      [-0.5, -0.5, 0.],
+        #      [-0.5, 0.5, 0.],
+        #      [0.5, 0.5, 0.]
+        #      ])
     else:
         torch.manual_seed(seed)
 
@@ -397,7 +451,8 @@ if __name__ == '__main__':
         use_cuda = True
 
     # create known a rotation and translation
-    tf = Transformation(trans=torch.FloatTensor([10., 2., 0.]))
+    tf = Transformation(rots=torch.FloatTensor([0., pi/2, 0.]), trans=torch.FloatTensor([0., 0., 0.]))
+    # tf = Transformation(trans=torch.FloatTensor([0., 0., 0.]))
     tf.setRotation(tf.getRotation(rep=1))
     tf.setRep(1)
     print("Rotation matrix:\n{}".format(tf.getRotation(rep=0)))
@@ -407,8 +462,8 @@ if __name__ == '__main__':
     for k, p in enumerate(powers):
         N.append(int(pow(2, p)))
         # create sample scene point and correspondences
-        # scenePts, measurePts = createData(4, transform=tf)
-        scenePts, measurePts = createData(N[k], seed=10, transform=tf)
+        scenePts, measurePts = createData(4, transform=tf)
+        # scenePts, measurePts = createData(N[k], seed=10, transform=tf)
         # print("Samples:\n{}".format(scenePts))
         # print("Measurements:\n{}".format(measurePts))
 
@@ -434,38 +489,38 @@ if __name__ == '__main__':
         # print(agT)
         print(agJac)
 
-        agc_begin = time.time()
-        agRot_cuda, agT_cuda = kabsch_autograd(
-            measurePts, scenePts.clone(), agJac_cuda, True)
-        ag_cuda_time.append(time.time()-agc_begin)
+        # agc_begin = time.time()
+        # agRot_cuda, agT_cuda = kabsch_autograd(
+        #     measurePts, scenePts.clone(), agJac_cuda, True)
+        # ag_cuda_time.append(time.time()-agc_begin)
         # print(agRot_cuda)
         # print(agT_cuda)
-        print(agJac_cuda)
+        # print(agJac_cuda)
 
         # statistics
-        print("Summary of analysis:")
-        print("Number of scene points: {}".format(N[k]))
-        print("Finite difference used {0:.6f} sec.".format(fd_time[k]))
-        print("Autograd used {0:.6f} sec.".format(ag_time[k]))
-        print("Autograd(cuda) used {0:.6f} sec.".format(ag_cuda_time[k]))
-
-        print("Difference of rotation matrices:")
-        print("\tfinite difference: {}".format(tf.compareRotation(fdRot)))
-        print("\tautograd_cpu: {}".format(tf.compareRotation(agRot)))
-        print("\tautograd_cuda: {}".format(
-            tf.compareRotation(agRot_cuda.cpu())))
-
-        print("Difference of translation vectors:")
-        print("\tfinite difference: {}".format(tf.compareTranslation(fdT)))
-        print("\tautograd_cpu: {}".format(tf.compareTranslation(agT)))
-        print("\tautograd_cuda: {}".format(
-            tf.compareTranslation(agT_cuda.cpu())))
-
+        # print("Summary of analysis:")
+        # print("Number of scene points: {}".format(N[k]))
+        # print("Finite difference used {0:.6f} sec.".format(fd_time[k]))
+        # print("Autograd used {0:.6f} sec.".format(ag_time[k]))
+        # print("Autograd(cuda) used {0:.6f} sec.".format(ag_cuda_time[k]))
+        #
+        # print("Difference of rotation matrices:")
+        # print("\tfinite difference: {}".format(tf.compareRotation(fdRot)))
+        # print("\tautograd_cpu: {}".format(tf.compareRotation(agRot)))
+        # print("\tautograd_cuda: {}".format(
+        #     tf.compareRotation(agRot_cuda.cpu())))
+        #
+        # print("Difference of translation vectors:")
+        # print("\tfinite difference: {}".format(tf.compareTranslation(fdT)))
+        # print("\tautograd_cpu: {}".format(tf.compareTranslation(agT)))
+        # print("\tautograd_cuda: {}".format(
+        #     tf.compareTranslation(agT_cuda.cpu())))
+        #
         print("Difference of jacobian matrices fdJac and agJac: {}".format(
             compareJacobian(fdJac, agJac)))
-        print("Difference of jacobian matrices fdJac and agJac_cuda: {}".format(
-            compareJacobian(fdJac, agJac_cuda)))
-        print("========================================\n")
+        # print("Difference of jacobian matrices fdJac and agJac_cuda: {}".format(
+        #     compareJacobian(fdJac, agJac_cuda)))
+        # print("========================================\n")
 
     # print(N)
     # print(fd_time)
