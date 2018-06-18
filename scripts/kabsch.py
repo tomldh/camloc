@@ -169,7 +169,7 @@ class Rodrigues(torch.autograd.Function):
         input, jac = ctx.saved_tensors
         # print("input size: {}".format(input.size()))
         # print(input)
-        print("jac size: {}".format(jac.size()))
+        # print("jac size: {}".format(jac.size()))
         # print(jac)
         # FIXME: determine grad_input size dynamically
         grad_input = torch.mm(jac, grad_output).view(3, 3)
@@ -201,10 +201,16 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
 
     print("\tComputing jacobian...")
     X.requires_grad = True
-    X.register_hook(utl.Hook_X)
+    # X.register_hook(utl.Hook_X)
+
+    tf = Transformation(rots=torch.FloatTensor([0.15, 0.15, 0.15]), trans=torch.FloatTensor([0., 0., 0.]))
 
     tx = torch.mean(X, 0)
     tp = torch.mean(P, 0)
+
+    print(tx)
+    print(tp)
+
     Xc = X.sub(0)
     Pc = P.sub(0)
 
@@ -213,7 +219,11 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
 
     Xc.register_hook(utl.Hook_Xc)
 
-    A = torch.mm(torch.t(Pc), Xc)
+    Xcp = torch.t(torch.mm(tf.getRotation(rep=0), torch.t(Xc+tf.getTranslation())))
+    Pcp = torch.t(torch.mm(tf.getRotation(rep=0), torch.t(Pc+tf.getTranslation())))
+    print("Xcp")
+    print(Xcp)
+    A = torch.mm(torch.t(Pcp), Xcp)
     print("A:")
     print(A)
     A.register_hook(utl.Hook_A)
@@ -273,13 +283,13 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
 
         X.grad.data.zero_()
 
-        # if use_cuda:
-        #     tx.backward(onehot.view(tx.size()).cuda(), retain_graph=True)
-        # else:
-        #     tx.backward(onehot.view(tx.size()), retain_graph=True)
-        # jacobian[i+3, :] = X.grad.data.view(-1)
-        #
-        # X.grad.data.zero_()
+        if use_cuda:
+            tx.backward(onehot.view(tx.size()).cuda(), retain_graph=True)
+        else:
+            tx.backward(onehot.view(tx.size()), retain_graph=True)
+        jacobian[i+3, :] = X.grad.data.view(-1)
+
+        X.grad.data.zero_()
 
     return r, tx
 
@@ -350,7 +360,7 @@ def kabsch_fd(P, X, eps=0.1, jacobian=None):
             jacA[:, i*3+j] = diffA.view(-1)
             # place derivatives to column (w.r.t X[i, j]) in jacobian matrix
             jacobian[:3, i*3+j] = diffR.view(-1)
-            # jacobian[3:, i*3+j] = diffT.view(-1)
+            jacobian[3:, i*3+j] = diffT.view(-1)
 
     # print("Jacobian U:")
     # print(jacU)
@@ -364,9 +374,16 @@ def kabsch_fd(P, X, eps=0.1, jacobian=None):
 # Helper functions
 #
 def kabsch(P, X):
+    # tf = Transformation(rots=torch.FloatTensor([0.1, 0.1, 0.1]), trans=torch.FloatTensor([0., 0., 0.]))
+    #
+    # Xcp = torch.t(torch.mm(tf.getRotation(rep=0), torch.t(X)))
+    # Pcp = torch.t(torch.mm(tf.getRotation(rep=0), torch.t(P)))
 
     tx = torch.mean(X, 0)
     tp = torch.mean(P, 0)
+
+    # print(tx)
+    # print(tp)
 
     Xc = X.sub(0)
     Pc = P.sub(0)
@@ -401,18 +418,18 @@ def createData(N, seed=-1, transform=None):
     tfData = torch.empty(N, 3, dtype=torch.float32)
 
     if seed < 0:
-        data = torch.FloatTensor(
-            [[1., 0., 0.],
-             [0., 0., 0.],
-             [0., 1., 0.],
-             [1., 1., 0.]
-             ])
         # data = torch.FloatTensor(
-        #     [[0.5, -0.5, 0.],
-        #      [-0.5, -0.5, 0.],
-        #      [-0.5, 0.5, 0.],
-        #      [0.5, 0.5, 0.]
+        #     [[1., 0., 0.],
+        #      [0., 0., 0.],
+        #      [0., 1., 0.],
+        #      [1., 1., 0.]
         #      ])
+        data = torch.FloatTensor(
+            [[0.5, -0.5, 0.],
+             [-0.5, -0.5, 0.],
+             [-0.5, 0.5, 0.],
+             [0.5, 0.5, 0.]
+             ])
     else:
         torch.manual_seed(seed)
 
@@ -463,6 +480,7 @@ if __name__ == '__main__':
         N.append(int(pow(2, p)))
         # create sample scene point and correspondences
         scenePts, measurePts = createData(4, transform=tf)
+        # measurePts = measurePts + torch.randn([4,3], dtype=torch.float32)
         # scenePts, measurePts = createData(N[k], seed=10, transform=tf)
         # print("Samples:\n{}".format(scenePts))
         # print("Measurements:\n{}".format(measurePts))
@@ -476,7 +494,7 @@ if __name__ == '__main__':
         fd_begin = time.time()
         fdRot, fdT = kabsch_fd(measurePts, scenePts.clone(), jacobian=fdJac)
         fd_time.append(time.time()-fd_begin)
-        # print(fdRot)
+        print(fdRot)
         # print(fdT)
         print(fdJac)
 
@@ -485,7 +503,7 @@ if __name__ == '__main__':
         agRot, agT = kabsch_autograd(
             measurePts, scenePts.clone(), agJac, False)
         ag_time.append(time.time()-ag_begin)
-        # print(agRot)
+        print(agRot)
         # print(agT)
         print(agJac)
 

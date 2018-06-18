@@ -54,10 +54,10 @@ def svd_backward(grads, self, some, raw_u, sigma, raw_v):
     print("sigma_mat")
     print(sigma_mat)
     sigma_mat_inv = sigma.pow(-1).diag()
-    for i in range(sigma_mat_inv.size()[0]):
-        for j in range(sigma_mat_inv.size()[1]):
-            if math.isinf(sigma_mat_inv[i, j]):
-                sigma_mat_inv[i, j] = 0
+    # for i in range(sigma_mat_inv.size()[0]):
+    #     for j in range(sigma_mat_inv.size()[1]):
+    #         if math.isinf(sigma_mat_inv[i, j]):
+    #             sigma_mat_inv[i, j] = 0
     print("sigma_mat_inv")
     print(sigma_mat_inv)
     sigma_expanded_sq = sigma.pow(2).expand_as(sigma_mat)
@@ -70,14 +70,14 @@ def svd_backward(grads, self, some, raw_u, sigma, raw_v):
     # Notice that F currently has 0s on diagonal. So we fill diagonal with +inf
     # first to prevent nan from appearing in backward of this function.
     # F.as_strided(k, k + 1).fill_(INFINITY)
-    # F[0, 0] = math.inf  # FIXME: to replace as_strided()
-    # F[1, 1] = math.inf  # FIXME: to replace as_strided()
-    # F[2, 2] = math.inf  # FIXME: to replace as_strided()
+    F[0, 0] = math.inf  # FIXME: to replace as_strided()
+    F[1, 1] = math.inf  # FIXME: to replace as_strided()
+    F[2, 2] = math.inf  # FIXME: to replace as_strided()
     F = F.pow(-1)
-    for i in range(F.size()[0]):
-        for j in range(F.size()[1]):
-            if math.isinf(F[i, j]):
-                F[i, j] = 0
+    # for i in range(F.size()[0]):
+    #     for j in range(F.size()[1]):
+    #         if math.isinf(F[i, j]):
+    #             F[i, j] = 0
     print("F inverse")
     print(F)
     if guDefined:  # gu.defined():
@@ -121,9 +121,9 @@ def workingset():
     some = True
 
     # raw_u (U)
-    U = torch.FloatTensor([[-9.9509e-02, -2.4461e-07,  9.9504e-01],
-                           [7.0360e-01, -7.0711e-01,  7.0363e-02],
-                           [7.0360e-01,  7.0711e-01,  7.0363e-02]])
+    U = torch.FloatTensor([[0.0000,  0.0000,  1.0000],
+                           [0.7071, -0.7071, -0.0000],
+                           [0.7071,  0.7071,  0.0000]])
 
     # sigma (S)
     S = torch.FloatTensor([3.0000,  1.0000,  0.0000])
@@ -133,24 +133,25 @@ def workingset():
                            [0.7071, -0.7071,  0.0000],
                            [0.0000,  0.0000,  1.0000]])
 
-    jacA_X = torch.FloatTensor([[-0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
-              0.0000,  0.0000, -0.0000,  0.0000,  0.0000],
-            [ 0.0000, -0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
-              0.0000,  0.0000,  0.0000, -0.0000,  0.0000],
-            [ 0.0000,  0.0000, -0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
-              0.0000,  0.0000,  0.0000,  0.0000, -0.0000],
-            [ 0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  1.0000,
-              0.0000,  0.0000,  1.0000,  0.0000,  0.0000],
-            [ 0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
-              1.0000,  0.0000,  0.0000,  1.0000,  0.0000],
-            [ 0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
-              0.0000,  1.0000,  0.0000,  0.0000,  1.0000],
-            [ 1.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
-              0.0000,  0.0000,  1.0000,  0.0000,  0.0000],
-            [ 0.0000,  1.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
-              0.0000,  0.0000,  0.0000,  1.0000,  0.0000],
-            [ 0.0000,  0.0000,  1.0000,  0.0000,  0.0000,  0.0000,  0.0000,
-              0.0000,  0.0000,  0.0000,  0.0000,  1.0000]])
+    jacA_X = torch.FloatTensor([
+        [-0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
+         0.0000,  0.0000, -0.0000,  0.0000,  0.0000],
+        [0.0000, -0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
+         0.0000,  0.0000,  0.0000, -0.0000,  0.0000],
+        [0.0000,  0.0000, -0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
+         0.0000,  0.0000,  0.0000,  0.0000, -0.0000],
+        [0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  1.0000,
+         0.0000,  0.0000,  1.0000,  0.0000,  0.0000],
+        [0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
+         1.0000,  0.0000,  0.0000,  1.0000,  0.0000],
+        [0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
+         0.0000,  1.0000,  0.0000,  0.0000,  1.0000],
+        [1.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
+         0.0000,  0.0000,  1.0000,  0.0000,  0.0000],
+        [0.0000,  1.0000,  0.0000,  0.0000,  0.0000,  0.0000,  0.0000,
+         0.0000,  0.0000,  0.0000,  1.0000,  0.0000],
+        [0.0000,  0.0000,  1.0000,  0.0000,  0.0000,  0.0000,  0.0000,
+         0.0000,  0.0000,  0.0000,  0.0000,  1.0000]])
 
     return [gU, gS, gV], A, some, U, S, V, jacA_X.t()
 
@@ -205,7 +206,7 @@ def problemset():
                            [1., 0., 0.]])
 
     # sigma (S)
-    S = torch.FloatTensor([1., 1., 0.])
+    S = torch.FloatTensor([1.0+1e-1, 1.0-1e-1, 0.+1e-1])
 
     # raw_v
     V = torch.FloatTensor([[1., 0., 0.],
@@ -237,8 +238,8 @@ def problemset():
 
 if __name__ == '__main__':
 
-    grad_output, A, some, U, S, V, jacA_X = workingset()
-    # grad_output, A, some, U, S, V, jacA_X = problemset()
+    # grad_output, A, some, U, S, V, jacA_X = workingset()
+    grad_output, A, some, U, S, V, jacA_X = problemset()
 
     result = svd_backward(grad_output, A, some, U, S, V)
     print("result of delta Loss w.r.t A")
