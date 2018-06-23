@@ -7,6 +7,7 @@ Autograd vs. Finite Difference Method
 """
 
 import torch
+import numpy as np
 import cv2
 from math import cos, sin, pow, pi
 
@@ -14,24 +15,10 @@ import time
 import matplotlib.pyplot as plt
 import utility as utl
 
-########################################
-# Data class
-# ----------
-#
-# This is a class that supports generation of 3D scene point data (X) and
-# its corresponding transformed data (P) by a sequence of rotations and
-# translations.
-#
-
-
-class SceneDataset():
-    """Scene dataset"""
-
-    def __init__(self, numPt=4):
-        self.X = torch.ones([3, numPt], dtype=torch.float32)
-        self.R = torch.eye(3, dtype=torch.float32)
-        self.P = []
-
+# file names
+FNAME_ACCURACY = "test_accuray.txt"
+FNAME_RUNTIME = "test_runtime.txt"
+FNAME_DATA = "problem_data.txt"
 
 ##########################################
 # Transform class
@@ -41,10 +28,11 @@ class SceneDataset():
 # rotation and translation.
 #
 
+
 class Transformation():
     """Transformation"""
 
-    def __init__(self, rep=0,
+    def __init__(self,
                  rots=None,
                  trans=None):
         """
@@ -52,93 +40,61 @@ class Transformation():
             rep: rotation representation
                 0 - matrix
                 1 - axis-angle
-            rots: user-defined rotation, [angleX, angleY, angleZ]
+            rots: user-defined rotational angles, [angleX, angleY, angleZ]
                 rep=0: 0 <= angle <= 2*PI
                 rep=1: -PI <= angle <= PI
             trans: user-defined translation
         """
-        self.rep = int(rep)
 
-        if self.rep == 0:
-            if rots is None:
-                rots = torch.rand(3, dtype=torch.float32) * 2 * pi
-
-            # FIXME: use opencv functions?
-            rotX = torch.FloatTensor(
-                [[1, 0, 0],
-                 [0, cos(rots[0]), -sin(rots[0])],
-                 [0, sin(rots[0]), cos(rots[0])]])
-
-            rotY = torch.FloatTensor(
-                [[cos(rots[1]), 0, -sin(rots[1])],
-                 [0, 1, 0],
-                 [sin(rots[1]), 0, cos(rots[1])]])
-
-            rotZ = torch.FloatTensor(
-                [[cos(rots[2]), -sin(rots[2]), 0],
-                 [sin(rots[2]), cos(rots[2]), 0],
-                 [0, 0, 1]])
-
-            self.R = torch.mm(rotZ, torch.mm(rotY, rotX))
-
-        elif self.rep == 1:
-            if rots is None:
-                rots = torch.rand(3, dtype=torch.float32) * 2 * pi - pi
-
-            self.R = rots.clone()
-
+        if rots is None:
+            self.rots = torch.rand(3, dtype=torch.float32) * 2 * pi
         else:
-            print('Error: undefined rotation representation.')
+            self.rots = rots
 
-        self.T = trans
+        if trans is None:
+            self.T = torch.randn(3, dtype=torch.float32)
+        else:
+            self.T = trans
 
-    def getRotation(self, rep=None):
-        if rep is None or self.rep == rep:
-            return self.R
+        self.R = cv2.Rodrigues(self.__computeRotationMatrix__())[0]
 
-        if self.rep == 0 and rep == 1:
-            return torch.from_numpy(cv2.Rodrigues(self.R.numpy())[0])
+    def __computeRotationMatrix__(self):
 
-        elif self.rep == 1 and rep == 0:
-            return torch.from_numpy(cv2.Rodrigues(self.R.numpy())[0])
+        rotX = np.array(
+            [[1, 0, 0],
+             [0, cos(self.rots[0]), -sin(self.rots[0])],
+             [0, sin(self.rots[0]), cos(self.rots[0])]])
+
+        rotY = np.array(
+            [[cos(self.rots[1]), 0, -sin(self.rots[1])],
+             [0, 1, 0],
+             [sin(self.rots[1]), 0, cos(self.rots[1])]])
+
+        rotZ = np.array(
+            [[cos(self.rots[2]), -sin(self.rots[2]), 0],
+             [sin(self.rots[2]), cos(self.rots[2]), 0],
+             [0, 0, 1]])
+
+        return np.dot(rotZ, np.dot(rotY, rotX))
+
+    def getRotationAngles(self):
+        return self.rots
+
+    def getRotationVector(self):
+        return torch.from_numpy(self.R).float()
+
+    def getRotationMatrix(self):
+        return torch.from_numpy(cv2.Rodrigues(self.R)[0]).float()
 
     def getTranslation(self):
         return self.T
 
-    def getRepresentation(self):
-        return self.rep
+    def setRotation(self, rots):
+        self.rots = rots
+        self.R = cv2.Rodrigues(self.__computeRotationMatrix__())[0]
 
-    def setRotation(self, another):
-        self.R = another
-
-    def setRep(self, another):
-        self.rep = another
-
-    def compareTranslation(self, another):
-        """
-        calculates averaged element-wise square of differences
-        """
-        if torch.numel(self.T) != torch.numel(another):
-            print('Error in comparison: number of elements does not match.')
-            return -1
-
-        return torch.sum(torch.pow((self.T-another), 2), 0) / torch.numel(self.T)
-
-    def compareRotation(self, another):
-        """
-        calculates averaged element-wise square of differences
-        """
-        if torch.numel(self.R) != torch.numel(another):
-            print('Error in comparison: number of elements does not match.')
-            return -1
-
-        if self.rep == 0:
-            return torch.sum(torch.sum(torch.pow((self.R-another), 2), 1), 0) / torch.numel(self.R)
-
-        elif self.rep == 1:
-            return torch.sum(torch.pow((self.R-another), 2), 0) / torch.numel(self.R)
-
-        return -1
+    def setTranslation(self, trans):
+        self.T = trans
 
 
 ########################################################
@@ -150,17 +106,26 @@ class Rodrigues(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, input, use_cuda):
-        if use_cuda:
-            input = input.cpu()
+    def forward(ctx, input):
+        # keep track of original tensor type
+        isCuda = input.is_cuda
+
+        # cuda tensor will be converted to cpu tensor
+        # no change if tensor is already cpu
+        input = input.cpu()
+
         r, jac = cv2.Rodrigues(input.detach().numpy())
-        r = torch.from_numpy(r)
-        jac = torch.from_numpy(jac)
-        if use_cuda:
+        r = torch.from_numpy(r)  # convert numpy to tensor
+        jac = torch.from_numpy(jac)  # convert numpy to tensor
+
+        # convert back to the original tensor type
+        if isCuda:
             input = input.cuda()
-            # r = r.cuda()
+            r = r.cuda()
             jac = jac.cuda()
+
         ctx.save_for_backward(input, jac)
+
         return r
 
     @staticmethod
@@ -171,6 +136,7 @@ class Rodrigues(torch.autograd.Function):
         # print(input)
         # print("jac size: {}".format(jac.size()))
         # print(jac)
+
         # FIXME: determine grad_input size dynamically
         grad_input = torch.mm(jac, grad_output).view(3, 3)
 
@@ -196,34 +162,36 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
         P = P.cuda()
 
     if jacobian is None:
-        R, t = kabsch(P, X)
-        return R
+        r, t = kabsch(P, X)
+        return r, t
 
     print("\tComputing jacobian...")
+
     X.requires_grad = True
     # X.register_hook(utl.Hook_X)
 
-    tf = Transformation(rots=torch.FloatTensor([0.15, 0.15, 0.15]), trans=torch.FloatTensor([0., 0., 0.]))
+    # tf = Transformation(rots=torch.FloatTensor([0.15, 0.15, 0.15]), trans=torch.FloatTensor([0., 0., 0.]))
 
     tx = torch.mean(X, 0)
     tp = torch.mean(P, 0)
 
+    t = tp - tx  # translation vector
     print(tx)
     print(tp)
 
-    Xc = X.sub(0)
-    Pc = P.sub(0)
+    Xc = X.sub(tx)
+    Pc = P.sub(tp)
 
     print("Xc")
     print(Xc)
 
     Xc.register_hook(utl.Hook_Xc)
 
-    Xcp = torch.t(torch.mm(tf.getRotation(rep=0), torch.t(Xc+tf.getTranslation())))
-    Pcp = torch.t(torch.mm(tf.getRotation(rep=0), torch.t(Pc+tf.getTranslation())))
-    print("Xcp")
-    print(Xcp)
-    A = torch.mm(torch.t(Pcp), Xcp)
+    # Pcp = torch.t(torch.mm(tf.getRotationMatrix(), torch.t(Pc+tf.getTranslation())))
+    # Xcp = torch.t(torch.mm(tf.getRotationMatrix(), torch.t(Xc+tf.getTranslation())))
+    # print("Xcp")
+    # print(Xcp)
+    A = torch.mm(torch.t(Pc), Xc)
     print("A:")
     print(A)
     A.register_hook(utl.Hook_A)
@@ -266,7 +234,7 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
     # R.register_hook(utl.Hook_R)
     rod = Rodrigues.apply
 
-    r = rod(R, use_cuda)
+    r = rod(R)  # rotation vector
 
     numelR = torch.numel(r)
 
@@ -284,14 +252,14 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
         X.grad.data.zero_()
 
         if use_cuda:
-            tx.backward(onehot.view(tx.size()).cuda(), retain_graph=True)
+            t.backward(onehot.view(t.size()).cuda(), retain_graph=True)
         else:
-            tx.backward(onehot.view(tx.size()), retain_graph=True)
+            t.backward(onehot.view(t.size()), retain_graph=True)
         jacobian[i+3, :] = X.grad.data.view(-1)
 
         X.grad.data.zero_()
 
-    return r, tx
+    return r, t
 
 
 ########################################################
@@ -303,7 +271,7 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
 # - jacobian matrix of rotation w.r.t each data point coordinate
 # - jacobian matrix of translation w.r.t each data point coordinate
 #
-def kabsch_fd(P, X, eps=0.1, jacobian=None):
+def kabsch_fd(P, X, jacobian=None, eps=0.01):
     """
     Args:
         P (tensor): Measurements
@@ -322,18 +290,15 @@ def kabsch_fd(P, X, eps=0.1, jacobian=None):
 
     if X.size()[1] != 3:
         print("\tError: Expected 3D coordinates, but got {}.".format(
-            X.size()[0]))
+            X.size()[1]))
 
-    R, t, U, A = kabsch(P, X)
+    r, t, U, A = kabsch(P, X)
 
     # Return rotation matrix only if no gradient is required
     if jacobian is None:
-        return R, t
+        return r, t
 
     print("\tComputing jacobian...")
-    # calculates partial derivatives
-    # create data containers
-    # FIXME: use axis-angle
 
     jacU = torch.zeros([9, 12], dtype=torch.float32)
     jacA = torch.zeros([9, 12], dtype=torch.float32)
@@ -341,33 +306,142 @@ def kabsch_fd(P, X, eps=0.1, jacobian=None):
     for i in range(X.size()[0]):
         for j in range(3):
 
+            # forward step
             X[i, j] += eps
             fwdR, fwdT, fwdU, fwdA = kabsch(P, X)
 
+            # backward step
             X[i, j] -= 2*eps
             bwdR, bwdT, bwdU, bwdA = kabsch(P, X)
 
+            # return to original
             X[i, j] += eps
 
             diffR = (fwdR-bwdR)/(2*eps)
-
             diffT = (fwdT-bwdT)/(2*eps)
 
-            diffU = (fwdU-bwdU) / (2*eps)
-            diffA = (fwdA-bwdA) / (2*eps)
-
-            jacU[:, i*3+j] = diffU.view(-1)
-            jacA[:, i*3+j] = diffA.view(-1)
+            # diffU = (fwdU-bwdU) / (2*eps)
+            # diffA = (fwdA-bwdA) / (2*eps)
+            #
+            # jacU[:, i*3+j] = diffU.view(-1)
+            # jacA[:, i*3+j] = diffA.view(-1)
             # place derivatives to column (w.r.t X[i, j]) in jacobian matrix
             jacobian[:3, i*3+j] = diffR.view(-1)
             jacobian[3:, i*3+j] = diffT.view(-1)
 
     # print("Jacobian U:")
     # print(jacU)
-    print("Jacobian A:")
-    print(jacA)
+    # print("Jacobian A:")
+    # print(jacA)
 
-    return R, t
+    return r, t
+
+
+########################################################
+# Function that performs kabsch algorithm with autograd and finite differences
+# Non-degenerate case: autograd
+# degenerate case: finite difference
+#
+def kabsch_stable(P, X, jacobian=None, use_cuda=False, eps=0.1):
+    """
+    Args:
+        P (tensor): Measurements
+        X (tensor): Scene points
+        eps (float): Epsilon used in finite difference approximation
+        calc_grad (bool): Flag to indicate whether to calculate jacobian
+
+    Return:
+        R (tensor): 3x3 rotation that satisfies P = RX
+        jacobian (tensor) 9x3N jacobian matrix of R w.r.t scene point coord.
+    """
+
+    print("Running Kabsch (Stable)...")
+
+    if use_cuda:
+        X = X.cuda()
+        P = P.cuda()
+
+    if jacobian is None:
+        r, t = kabsch(P, X)
+        return r, t
+
+    print("\tComputing jacobian...")
+
+    X.requires_grad = True
+
+    # compute centroid as average of coordinates
+    tx = torch.mean(X, 0)
+    tp = torch.mean(P, 0)
+
+    t = tp - tx  # translation vector
+
+    # move centroid to origin
+    Xc = X.sub(tx)
+    Pc = P.sub(tp)
+
+    A = torch.mm(torch.t(Pc), Xc)
+
+    U, S, V = torch.svd(A)
+    # print("S")
+    # print(S)
+
+    # flag for degeneracy
+    degenerate = False
+
+    # degenerate if any singular value is zero
+    if torch.numel(torch.nonzero(S)) != torch.numel(S):
+        # print(torch.nonzero(S).size())
+        # print(S.size())
+        # print("zero singular")
+        degenerate = True
+
+    # degenerate if singular values are not distinct
+    if torch.abs(S[0]-S[1]) < 1e-8 or torch.abs(S[0]-S[2]) < 1e-8 or torch.abs(S[1]-S[2]) < 1e-8:
+        # print("non distinct singular")
+        degenerate = True
+
+    # if degenerate, resort back to finite difference for stability
+    if degenerate is True:
+        X.requires_grad = False
+        return None, None
+
+    # non-degenerate, continue with kabsch algorithm with autograd
+    Vt = torch.t(V)
+
+    d = torch.det(torch.mm(U, Vt))
+
+    D = torch.FloatTensor([[1, 0, 0], [0, 1, 0], [0, 0, d]])
+
+    R = torch.mm(U, torch.mm(D, Vt))
+
+    rod = Rodrigues.apply
+
+    r = rod(R)  # rotation vector
+
+    numelR = torch.numel(r)
+
+    # compute jacobian matrix
+    for i in range(numelR):
+        onehot = torch.zeros(numelR, dtype=torch.float32)
+        onehot[i] = 1
+
+        if use_cuda:
+            r.backward(onehot.view(r.size()).cuda(), retain_graph=True)
+        else:
+            r.backward(onehot.view(r.size()), retain_graph=True)
+        jacobian[i, :] = X.grad.data.view(-1)
+
+        X.grad.data.zero_()
+
+        if use_cuda:
+            t.backward(onehot.view(t.size()).cuda(), retain_graph=True)
+        else:
+            t.backward(onehot.view(t.size()), retain_graph=True)
+        jacobian[i+3, :] = X.grad.data.view(-1)
+
+        X.grad.data.zero_()
+
+    return r, t
 
 
 ########################################################
@@ -382,11 +456,13 @@ def kabsch(P, X):
     tx = torch.mean(X, 0)
     tp = torch.mean(P, 0)
 
+    t = tp - tx  # translation vector
+
     # print(tx)
     # print(tp)
 
-    Xc = X.sub(0)
-    Pc = P.sub(0)
+    Xc = X.sub(tx)
+    Pc = P.sub(tp)
 
     A = torch.mm(torch.t(Pc), Xc)
 
@@ -400,55 +476,359 @@ def kabsch(P, X):
 
     R = torch.mm(U, torch.mm(D, Vt))
 
-    return torch.from_numpy(cv2.Rodrigues(R.numpy())[0]), tx, U, A
+    r = torch.from_numpy(cv2.Rodrigues(R.numpy())[0])  # rotation vector
+
+    return r, t, U, A
 
 
-def createData(N, seed=-1, transform=None):
+def createScene(N, seed=None):
     """create 3D scene point data
 
     Args:
         N - number of points
-        seed - seed for random value generation. If seed<0, use default points.
+        seed - seed for random value generation
 
     Return:
         data - Nx3 scene point matrix
-        tfData - Nx3 transformed data as fake measurement
+        tfData - Nx3 transformed data used as measurement
     """
     data = torch.empty(N, 3, dtype=torch.float32)
-    tfData = torch.empty(N, 3, dtype=torch.float32)
 
-    if seed < 0:
-        # data = torch.FloatTensor(
-        #     [[1., 0., 0.],
-        #      [0., 0., 0.],
-        #      [0., 1., 0.],
-        #      [1., 1., 0.]
-        #      ])
+    if seed is None:
         data = torch.FloatTensor(
-            [[0.5, -0.5, 0.],
-             [-0.5, -0.5, 0.],
-             [-0.5, 0.5, 0.],
-             [0.5, 0.5, 0.]
+            [[1., 0., 0.],
+             [0., 0., 0.],
+             [0., 1., 0.],
+             [1., 1., 0.]
              ])
+        # data = torch.FloatTensor(
+        #     [[0.5, -0.5, 0.],
+        #      [-0.5, -0.5, 0.],
+        #      [-0.5, 0.5, 0.],
+        #      [0.5, 0.5, 0.]
+        #      ])
     else:
-        torch.manual_seed(seed)
+        if seed > 0:
+            torch.manual_seed(seed)
 
         data[:, 0] = torch.randn(N, dtype=torch.float32)
         data[:, 1] = torch.randn(N, dtype=torch.float32)
         data[:, 2] = torch.randn(N, dtype=torch.float32)
 
-    if transform is not None:
-        tfData = torch.t(torch.mm(transform.getRotation(rep=0),
-                                  torch.t(data+transform.getTranslation())))
-    else:
-        tfData = data.clone()
-
-    return data, tfData
+    return data
 
 
-def compareJacobian(A, B):
+def createMeasurements(data, transform, fixed=False):
+    """Given scene points, create measurements by some transformations
 
+    Args:
+    data - scene points
+    transform - class object that contains rotation and translation
+    fixed - if true, existing transformation will be overriden by random transformation. If false, use existing transformation.
+
+    """
+
+    assert data is not None
+    assert transform is not None
+    assert data.size()[1] == 3
+
+    if fixed is False:
+        # set a new transformation
+        transform.setRotation(torch.rand(3, dtype=torch.float32) * 2 * pi)
+        transform.setTranslation(torch.randn(3, dtype=torch.float32))
+
+    # P = RX + T
+    return torch.t(torch.mm(transform.getRotationMatrix(), torch.t(data))) + transform.getTranslation()
+
+
+def compareMatrix2D(A, B):
+    """Compute averaged sum of squared differences"""
+
+    assert A.size() == B.size()
     return torch.sum(torch.sum(torch.pow((A-B), 2), 1), 0) / torch.numel(A)
+
+
+def compareVector(A, B):
+    """Compute averaged sum of squared differences"""
+
+    assert A.size() == B.size()
+    return torch.sum(torch.pow((A-B), 2), 0) / torch.numel(A)
+
+
+########################################################
+# Tests
+#
+
+def test_runtime():
+    """
+    Comparison of methods in terms of
+    Runtime vs Number of scene points
+
+    """
+    fileLog = open(FNAME_RUNTIME, "w")
+    fileLog.write("#Points\t#Trials\tFinite Difference\tAutograd\tAutograd Cuda\n")
+    fileLog.close()
+
+    if torch.cuda.is_available():
+        use_cuda = True
+
+    # create known a rotation and translation
+    tf = Transformation(rots=torch.FloatTensor([0., pi/2, 0.]), trans=torch.FloatTensor([10., 10., 0.]))
+    # tf = Transformation(trans=torch.FloatTensor([0., 0., 0.]))
+
+    # list for statistics
+    # powers = [2, 4, 6, 8, 10, 12]
+    powers = [2]
+    N = []
+    trials = 1
+
+    sumFdTime = 0
+    sumAgTime = 0
+    sumAgCudaTime = 0
+
+    timeFd = []
+    timeAg = []
+    timeAgCuda = []
+
+    for k, p in enumerate(powers):
+        N.append(int(pow(2, p)))
+        # create sample scene points
+        scenePts = createScene(N[k], seed=10)
+        # create measurements
+        measurePts = createMeasurements(scenePts, transform=tf, fixed=True)
+
+        # print("Samples:\n{}".format(scenePts))
+        # print("Measurements:\n{}".format(measurePts))
+
+        # create jacobian matrices
+        jacFd = torch.zeros([6, N[k]*3], dtype=torch.float32)
+        jacAg = torch.zeros([6, N[k]*3], dtype=torch.float32)
+        jacAgCuda = torch.zeros([6, N[k]*3], dtype=torch.float32)
+
+        for trial in range(trials):
+            # finite differences
+            beginFd = time.time()
+            rFd, tFd = kabsch_fd(measurePts, scenePts.clone(), jacFd)
+            sumFdTime += (time.time()-beginFd)
+            # timeFd.append(time.time()-beginFd)
+            # print(rFd)
+            # print(tFd)
+            # print(jacFd)
+
+            # autograd
+            beginAg = time.time()
+            rAg, tAg = kabsch_autograd(
+                measurePts, scenePts.clone(), jacAg, False)
+            sumAgTime += (time.time()-beginAg)
+            # timeAg.append(time.time()-beginAg)
+            # print(rAg)
+            # print(tAg)
+            # print(jacAg)
+
+            # autograd with CUDA
+            # FIXME: warm-up GPU
+            beginAgCuda = time.time()
+            rAgCuda, tAgCuda = kabsch_autograd(
+                measurePts, scenePts.clone(), jacAgCuda, True)
+            sumAgCudaTime += (time.time()-beginAgCuda)
+            timeAgCuda.append(time.time()-beginAgCuda)
+            print(rAgCuda)
+            print(tAgCuda)
+            # print(jacAgCuda)
+
+        # calculate average runtime
+        timeFd.append(sumFdTime/trials)
+        timeAg.append(sumAgTime/trials)
+        timeAgCuda.append(sumAgCudaTime/trials)
+
+        sumFdTime = 0
+        sumAgTime = 0
+        sumAgCudaTime = 0
+
+        # write runtime statistics for the current dataset size
+        fileLog = open(FNAME_RUNTIME, "a")
+        fileLog.write("{0}\t\t{1}\t\t{2:.6f}\t\t\t{3:.6f}\t{4:.6f}".format(N[k], trials, timeFd[k], timeAg[k], timeAgCuda[k]))
+        fileLog.close()
+
+        # statistics
+        print("Summary of analysis:")
+        print("Difference of rotation matrices:")
+        print("Original rotation")
+        print(tf.getRotationVector())
+        print("\tfinite difference: {}".format(compareVector(rFd, tf.getRotationVector())))
+        print(rFd)
+        print("\tautograd: {}".format(compareVector(rAg, tf.getRotationVector())))
+        print(rAg)
+        print("\tautograd_cuda: {}".format(
+            compareVector(rAgCuda.cpu(), tf.getRotationVector())))
+
+        print("Difference of translation vectors:")
+        print("Original")
+        print(tf.getTranslation())
+        print("\tfinite difference: {}".format(compareVector(tFd, tf.getTranslation())))
+        print(tFd)
+        print("\tautograd: {}".format(compareVector(tFd, tf.getTranslation())))
+        print(tAg)
+        # print("\tautograd_cuda: {}".format(
+        #     tf.compareTranslation(agT_cuda.cpu())))
+
+        print("Difference of jacobian matrices fdJac and agJac: {}".format(
+            compareMatrix2D(jacFd, jacAg)))
+        print(jacFd)
+        print(jacAg)
+        # print("Difference of jacobian matrices fdJac and agJac_cuda: {}".format(
+        #     compareJacobian(jacFd, jacAgCuda)))
+        print("========================================\n")
+
+    # plot graph of runtime vs size of dataset
+    # plt.figure()
+    # plt.loglog(N, timeFd, marker="x", color="r", label="finite difference")
+    # plt.loglog(N, timeAg, marker="x", color="b", label="autograd CPU")
+    # plt.loglog(N, timeAgCuda, marker="x", color="g", label="autograd GPU")
+    # plt.xlabel("N")
+    # plt.ylabel("Runtime/sec")
+    # plt.legend(loc=0)
+    # plt.show()
+
+
+def test_accuracy():
+    """Tests for accuracy of gradient under all possible scenarios
+
+    Test Input:
+    1. Randomly generated scene points
+    2. Various dataset size
+    3. Multiple repetitions for each size
+
+    Test Output:
+    1. Percentage of degenerate cases
+    2. Percentage of accuracy
+    3.
+    """
+
+    if torch.cuda.is_available():
+        use_cuda = True
+
+    fileLog = open(FNAME_ACCURACY, "w")
+    fileLog.write("#Points\t#Trials\t#Degeneracy\t#Jacobian errors\t#Translation errors\t#Rotation errors\t#Rotation errors (Finite Difference)\n")
+    fileLog.close()
+
+    fileLog = open(FNAME_DATA, "w")
+    fileLog.write("\n")
+    fileLog.close()
+
+    powers = [2, 4, 6, 8, 10]
+    N = []
+    trials = 50  # trials per dataset size
+    etol = 1e-4  # error tolerance of results
+    delta = 0.01
+
+    cntErrJac = 0
+    cntErrRot = 0
+    cntErrTrans = 0
+    cntErrRotFD = 0
+    cntDegen = 0
+
+    sumErrJac = 0
+    sumErrRot = 0
+    sumErrTrans = 0
+    sumErrRotFD = 0
+    sumDegen = 0
+
+    # create known a rotation and translation
+    tf = Transformation()
+
+    for k, p in enumerate(powers):
+        N.append(int(pow(2, p)))
+        # create sample scene point
+        # scenePts = createScene(N[k], seed=None)
+        # print(scenePts)
+        # scenePts = createScene(4, seed=None)
+        # create jacobian matrix
+        jacAg = torch.zeros([6, N[k]*3], dtype=torch.float32)
+        jacFd = torch.zeros([6, N[k]*3], dtype=torch.float32)
+
+        for trial in range(trials):
+            scenePts = createScene(N[k], seed=-1)
+            # print(scenePts)
+            measurePts = createMeasurements(scenePts, transform=tf, fixed=False)
+
+            rAg, tAg = kabsch_stable(measurePts, scenePts.clone(), jacAg)
+
+            if rAg is None and tAg is None:
+                cntDegen += 1
+                rAg, tAg = kabsch_fd(measurePts, scenePts.clone(), jacAg, delta)
+
+            rFd, tFd = kabsch_fd(measurePts, scenePts.clone(), jacFd, delta)
+
+            errJac = compareMatrix2D(jacAg, jacFd)
+            errRot = compareVector(tf.getRotationVector(), rAg)
+            errTrans = compareVector(tf.getTranslation(), tAg)
+            errRotFD = compareVector(tf.getRotationVector(), rFd)
+
+            # print("Original rotation: ")
+            # print(tf.getRotationVector())
+            # print("Estimated rotation: ")
+            # print(r)
+            # print("Jacobian FD:")
+            # print(jacFd)
+            # print("Jacobian autograd")
+            # print(jacAg)
+
+            if errJac > etol:
+                cntErrJac += 1
+                fileLog = open(FNAME_DATA, "a")
+                fileLog.write("epsilon={0}, use_cuda={1}\n".format(delta), use_cuda)
+                fileLog.write("Scene Points:\n")
+                fileLog.write("{}\n".format(scenePts))
+                fileLog.write("Original rotation angles: \n")
+                fileLog.write("{}\n".format(tf.getRotationAngles()))
+                fileLog.write("Original rotation vector: \n")
+                fileLog.write("{}\n".format(tf.getRotationVector()))
+                fileLog.write("est. Rotation: \n")
+                fileLog.write("{}\n".format(rAg))
+                fileLog.write("Original translation: \n")
+                fileLog.write("{}\n".format(tf.getTranslation()))
+                fileLog.write("est. Translation: \n")
+                fileLog.write("{}\n".format(tAg))
+                fileLog.write("Finite diff Jacobian: \n")
+                fileLog.write("{}\n".format(jacFd))
+                fileLog.write("est. Jacobian: \n")
+                fileLog.write("{}\n".format(jacAg))
+                fileLog.write("\n=========================================\n")
+                fileLog.close()
+
+            if errRot > etol:
+                cntErrRot += 1
+
+            if errTrans > etol:
+                cntErrTrans += 1
+
+            if errRotFD > etol:
+                cntErrRotFD += 1
+
+            sumErrJac += errJac
+            sumErrRot += errRot
+            sumErrTrans += errTrans
+            sumErrRotFD += errRotFD
+
+        sumErrJac /= trials
+        sumErrRot /= trials
+        sumErrTrans /= trials
+
+        fileLog = open(FNAME_ACCURACY, "a")
+        fileLog.write("{0}\t\t{1}\t\t{2}\t\t\t{3}({7})\t{4}({8})\t{5}({9})\t{6}\n\n".format(N[k],trials,cntDegen, cntErrJac, cntErrTrans, cntErrRot, cntErrRotFD, sumErrJac, sumErrTrans, sumErrRot))
+        fileLog.close()
+
+        sumErrJac = 0
+        sumErrRot = 0
+        sumErrTrans = 0
+        sumErrRotFD = 0
+
+        cntDegen = 0
+        cntErrJac = 0
+        cntErrRot = 0
+        cntErrTrans = 0
+        cntErrRotFD = 0
 
 
 ########################################################
@@ -456,100 +836,5 @@ def compareJacobian(A, B):
 #
 if __name__ == '__main__':
 
-    # list for statistics
-    # powers = [2, 4, 6, 8, 10, 12]
-    powers = [2]
-    N = []
-    fd_time = []
-    ag_time = []
-    ag_cuda_time = []
-
-    if torch.cuda.is_available():
-        use_cuda = True
-
-    # create known a rotation and translation
-    tf = Transformation(rots=torch.FloatTensor([0., pi/2, 0.]), trans=torch.FloatTensor([0., 0., 0.]))
-    # tf = Transformation(trans=torch.FloatTensor([0., 0., 0.]))
-    tf.setRotation(tf.getRotation(rep=1))
-    tf.setRep(1)
-    print("Rotation matrix:\n{}".format(tf.getRotation(rep=0)))
-    print("Rotation vector:\n{}".format(tf.getRotation(rep=1)))
-    print("Translation:\n{}".format(tf.getTranslation()))
-
-    for k, p in enumerate(powers):
-        N.append(int(pow(2, p)))
-        # create sample scene point and correspondences
-        scenePts, measurePts = createData(4, transform=tf)
-        # measurePts = measurePts + torch.randn([4,3], dtype=torch.float32)
-        # scenePts, measurePts = createData(N[k], seed=10, transform=tf)
-        # print("Samples:\n{}".format(scenePts))
-        # print("Measurements:\n{}".format(measurePts))
-
-        fdJac = torch.zeros([6, torch.numel(scenePts)], dtype=torch.float32)
-        agJac = torch.zeros([6, torch.numel(scenePts)], dtype=torch.float32)
-        agJac_cuda = torch.zeros(
-            [6, torch.numel(scenePts)], dtype=torch.float32)
-
-        # finite differences
-        fd_begin = time.time()
-        fdRot, fdT = kabsch_fd(measurePts, scenePts.clone(), jacobian=fdJac)
-        fd_time.append(time.time()-fd_begin)
-        print(fdRot)
-        # print(fdT)
-        print(fdJac)
-
-        # autograd
-        ag_begin = time.time()
-        agRot, agT = kabsch_autograd(
-            measurePts, scenePts.clone(), agJac, False)
-        ag_time.append(time.time()-ag_begin)
-        print(agRot)
-        # print(agT)
-        print(agJac)
-
-        # agc_begin = time.time()
-        # agRot_cuda, agT_cuda = kabsch_autograd(
-        #     measurePts, scenePts.clone(), agJac_cuda, True)
-        # ag_cuda_time.append(time.time()-agc_begin)
-        # print(agRot_cuda)
-        # print(agT_cuda)
-        # print(agJac_cuda)
-
-        # statistics
-        # print("Summary of analysis:")
-        # print("Number of scene points: {}".format(N[k]))
-        # print("Finite difference used {0:.6f} sec.".format(fd_time[k]))
-        # print("Autograd used {0:.6f} sec.".format(ag_time[k]))
-        # print("Autograd(cuda) used {0:.6f} sec.".format(ag_cuda_time[k]))
-        #
-        # print("Difference of rotation matrices:")
-        # print("\tfinite difference: {}".format(tf.compareRotation(fdRot)))
-        # print("\tautograd_cpu: {}".format(tf.compareRotation(agRot)))
-        # print("\tautograd_cuda: {}".format(
-        #     tf.compareRotation(agRot_cuda.cpu())))
-        #
-        # print("Difference of translation vectors:")
-        # print("\tfinite difference: {}".format(tf.compareTranslation(fdT)))
-        # print("\tautograd_cpu: {}".format(tf.compareTranslation(agT)))
-        # print("\tautograd_cuda: {}".format(
-        #     tf.compareTranslation(agT_cuda.cpu())))
-        #
-        print("Difference of jacobian matrices fdJac and agJac: {}".format(
-            compareJacobian(fdJac, agJac)))
-        # print("Difference of jacobian matrices fdJac and agJac_cuda: {}".format(
-        #     compareJacobian(fdJac, agJac_cuda)))
-        # print("========================================\n")
-
-    # print(N)
-    # print(fd_time)
-    # print(ag_time)
-    # print(ag_cuda_time)
-    #
-    # plt.figure()
-    # plt.loglog(N, fd_time, marker="x", color="r", label="finite difference")
-    # plt.loglog(N, ag_time, marker="x", color="b", label="autograd CPU")
-    # plt.loglog(N, ag_cuda_time, marker="x", color="g", label="autograd GPU")
-    # plt.xlabel("N")
-    # plt.ylabel("Runtime/sec")
-    # plt.legend(loc=0)
-    # plt.show()
+    test_runtime()
+    # test_accuracy()
