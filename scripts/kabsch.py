@@ -13,22 +13,17 @@ from math import cos, sin, pow, pi
 
 import time
 import matplotlib.pyplot as plt
-import utility as utl
 
 # file names
 FNAME_ACCURACY = "test_accuray.txt"
 FNAME_RUNTIME = "test_runtime.txt"
 FNAME_DATA = "problem_data.txt"
 
+
 ##########################################
-# Transform class
-# ---------------
-#
 # This class supports routines related to 3D data transformations, such as
 # rotation and translation.
 #
-
-
 class Transformation():
     """Transformation"""
 
@@ -150,129 +145,6 @@ class Rodrigues(torch.autograd.Function):
 
 
 ########################################################
-# Function that performs kabsch algorithm and differentitation using autograd.
-#
-def kabsch_autograd(P, X, jacobian=None, use_cuda=False):
-    """
-    Args:
-        P (tensor): measurement points
-        X (tensor): scene points
-        jacobian (tensor): 6x3N jacobian matrix of r|t w.r.t scene point coord
-        use_cuda (bool): indicates whether to use GPU
-
-    Return:
-        r (tensor): 3x1 rotation vector that satisfies P = RX+T
-        t (tensor) 3x1 translation vector that satisfies P = RX+T
-    """
-    print("Running Kabsch (Autograd)")
-
-    if use_cuda:
-        print("\t Using CUDA")
-        X = X.cuda()
-        P = P.cuda()
-
-    if jacobian is None:
-        r, t = kabsch(P, X)
-        return r, t
-
-    print("\tComputing jacobian")
-
-    X.requires_grad = True
-    # X.register_hook(utl.Hook_X)
-
-    # tf = Transformation(rots=torch.FloatTensor([0.15, 0.15, 0.15]), trans=torch.FloatTensor([0., 0., 0.]))
-
-    tx = torch.mean(X, 0)
-    tp = torch.mean(P, 0)
-
-    t = tp - tx  # translation vector
-    print(tx)
-    print(tp)
-
-    Xc = X.sub(tx)
-    Pc = P.sub(tp)
-
-    print("Xc")
-    print(Xc)
-
-    Xc.register_hook(utl.Hook_Xc)
-
-    # Pcp = torch.t(torch.mm(tf.getRotationMatrix(), torch.t(Pc+tf.getTranslation())))
-    # Xcp = torch.t(torch.mm(tf.getRotationMatrix(), torch.t(Xc+tf.getTranslation())))
-    # print("Xcp")
-    # print(Xcp)
-    A = torch.mm(torch.t(Pc), Xc)
-    print("A:")
-    print(A)
-    A.register_hook(utl.Hook_A)
-    U, S, V = torch.svd(A)
-    # S.register_hook(utl.Hook_S)
-    U.register_hook(utl.Hook_U)
-    V.register_hook(utl.Hook_V)
-    print("U:")
-    print(U)
-    print("S:")
-    print(S)
-    print("V")
-    print(V)
-    # numelU = torch.numel(A)
-    # jacU = torch.zeros([9,12], dtype=torch.float)
-    # for i in range(numelU):
-    #     print("Gradient w.r.t. U element {}".format(i))
-    #     onehot = torch.zeros(numelU, dtype=torch.float32)
-    #     onehot[i] = 1
-    #
-    #     if use_cuda:
-    #         U.backward(onehot.view(U.size()).cuda(), retain_graph=True)
-    #     else:
-    #         U.backward(onehot.view(U.size()), retain_graph=True)
-    #     jacU[i, :] = X.grad.data.view(-1)
-    #     X.grad.data.zero_()
-    # print("Autograd Jacobian U:")
-    # print(jacU)
-
-    Vt = torch.t(V)
-    # Vt.register_hook(utl.Hook_Vt)
-    d = torch.det(torch.mm(U, Vt))
-    # d.register_hook(utl.Hook_d)
-    D = torch.FloatTensor([[1, 0, 0], [0, 1, 0], [0, 0, d]])
-    # D.register_hook(utl.Hook_D)
-    if use_cuda:
-        D = D.cuda()
-
-    R = torch.mm(U, torch.mm(D, Vt))
-    # R.register_hook(utl.Hook_R)
-    rod = Rodrigues.apply
-
-    r = rod(R)  # rotation vector
-
-    numelR = torch.numel(r)
-
-    for i in range(numelR):
-        print("Gradient w.r.t. element {}".format(i))
-        onehot = torch.zeros(numelR, dtype=torch.float32)
-        onehot[i] = 1
-
-        if use_cuda:
-            r.backward(onehot.view(r.size()).cuda(), retain_graph=True)
-        else:
-            r.backward(onehot.view(r.size()), retain_graph=True)
-        jacobian[i, :] = X.grad.data.view(-1)
-
-        X.grad.data.zero_()
-
-        if use_cuda:
-            t.backward(onehot.view(t.size()).cuda(), retain_graph=True)
-        else:
-            t.backward(onehot.view(t.size()), retain_graph=True)
-        jacobian[i+3, :] = X.grad.data.view(-1)
-
-        X.grad.data.zero_()
-
-    return r, t
-
-
-########################################################
 # Function that performs kabsch algorithm and differentiation using
 # using central finite differences.
 #
@@ -333,7 +205,7 @@ def kabsch_fd(P, X, jacobian=None, eps=0.01):
 # Non-degenerate case: autograd
 # degenerate case: finite difference
 #
-def kabsch_stable(P, X, jacobian=None, use_cuda=False, eps=0.01):
+def kabsch_autograd(P, X, jacobian=None, use_cuda=False, eps=0.01):
     """
     Args:
         P (tensor): Measurements
@@ -347,7 +219,7 @@ def kabsch_stable(P, X, jacobian=None, use_cuda=False, eps=0.01):
         t (tensor): 3x1 translation vector that satisfies P = RX + T
     """
 
-    print("Running Kabsch (Stable)")
+    print("Running Kabsch (Autograd)")
 
     if use_cuda:
         print("\tUsing CUDA")
@@ -631,7 +503,7 @@ def test_runtime():
 
     powers = [2, 4, 6, 8, 10]
     N = []  # number of points by 2^power
-    trials = 50  # number of repetitions for each dataset size
+    trials = 100  # number of repetitions for each dataset size
 
     # sum of time for all the trials of each data dataset size
     sumFdTime = 0
@@ -668,14 +540,14 @@ def test_runtime():
 
             # autograd
             beginAg = time.time()
-            rAg, tAg = kabsch_stable(
+            rAg, tAg = kabsch_autograd(
                 measurePts, scenePts.clone(), jacAg, False)
             sumAgTime += (time.time()-beginAg)
 
             # autograd with CUDA
             # FIXME: warm-up GPU
             beginAgCuda = time.time()
-            rAgCuda, tAgCuda = kabsch_stable(
+            rAgCuda, tAgCuda = kabsch_autograd(
                 measurePts, scenePts.clone(), jacAgCuda, True)
             sumAgCudaTime += (time.time()-beginAgCuda)
 
@@ -733,7 +605,7 @@ def test_accuracy():
     powers = [2, 4, 6, 8, 10]
     N = []  # number of points by 2^power
     trials = 100  # trials per dataset size
-    etol = 1e-3  # error tolerance of results
+    etol = 1e-3  # error tolerance of results FIXME: use different tolerance?
     delta = 0.01  # used in finite difference calculation
 
     # number of cases in all trials per dataset size
@@ -772,8 +644,9 @@ def test_accuracy():
             measurePts = createMeasurements(scenePts, transform=tf, fixed=False)
 
             # run Kabsch with autograd
-            rAg, tAg = kabsch_stable(measurePts, scenePts.clone(), jacAg)
+            rAg, tAg = kabsch_autograd(measurePts, scenePts.clone(), jacAg)
 
+            # run finite difference version if degenerate case is encountered
             if rAg is None and tAg is None:
                 cntDegen += 1
                 rAg, tAg = kabsch_fd(measurePts, scenePts.clone(), jacAg, delta)
