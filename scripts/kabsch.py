@@ -238,8 +238,6 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False, eps=0.01):
     tx = torch.mean(X, 0)
     tp = torch.mean(P, 0)
 
-    t = tp - tx  # translation vector
-
     # move centroid to origin
     Xc = X.sub(tx)
     Pc = P.sub(tp)
@@ -279,6 +277,8 @@ def kabsch_autograd(P, X, jacobian=None, use_cuda=False, eps=0.01):
     rod = Rodrigues.apply
 
     r = rod(R)  # rotation vector
+
+    t = tp - torch.mm(R, tx.view(3, -1)).view(-1)  # translation vector
 
     numelR = torch.numel(r)
 
@@ -325,10 +325,9 @@ def kabsch(P, X):
         t (tensor): 3x1 translation vector that satisfies P = RX + T
     """
 
+    # compute centroids as average of coordinates
     tx = torch.mean(X, 0)
     tp = torch.mean(P, 0)
-
-    t = tp - tx  # translation vector
 
     # move centroid to origin
     Xc = X.sub(tx)
@@ -347,6 +346,8 @@ def kabsch(P, X):
     R = torch.mm(U, torch.mm(D, Vt))
 
     r = torch.from_numpy(cv2.Rodrigues(R.numpy())[0])  # rotation vector
+
+    t = tp - torch.mm(R, tx.view(3, -1)).view(-1)  # translation vector
 
     return r, t
 
